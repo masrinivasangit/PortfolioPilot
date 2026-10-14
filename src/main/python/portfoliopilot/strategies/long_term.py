@@ -1,9 +1,36 @@
+# strategies/long_term.py
 import pandas as pd
+
 
 class LongTermValueStrategy:
     def __init__(self):
         self.name = "Long_Term_Value"
 
-    def filter_universe(self, historical_data: pd.DataFrame) -> list:
-        """Selects historical multi-year breakout components with low volatility."""
-        return list(historical_data.columns)
+    def filter_universe(self, historical_data: pd.DataFrame, pool_tickers: list) -> pd.DataFrame:
+        """
+        Scores assets based on steady, long-term multi-week upward support paths.
+        """
+        rankings = []
+        for ticker in pool_tickers:
+            if ticker not in historical_data.columns:
+                continue
+
+            prices = historical_data[ticker].dropna()
+            if len(prices) < 12:  # Requires a solid 12-week data history
+                continue
+
+            p_old = prices.iloc[-12]
+            p_current = prices.iloc[-1]
+
+            if p_old > 0:
+                long_term_growth = (p_current - p_old) / p_old
+                # Standard deviation penalizes highly volatile, erratic price jumps
+                volatility_drag = prices.pct_change().std()
+                risk_adjusted_trend = long_term_growth / (volatility_drag + 1e-9)
+
+                rankings.append({'Ticker': ticker, 'Score': risk_adjusted_trend, 'Price': p_current})
+
+        if not rankings:
+            return pd.DataFrame()
+
+        return pd.DataFrame(rankings).sort_values(by='Score', ascending=False)

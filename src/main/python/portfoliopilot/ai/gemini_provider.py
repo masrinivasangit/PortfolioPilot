@@ -1,4 +1,4 @@
-from ai.provider import BaseAIProvider
+from portfoliopilot.ai.provider import BaseAIProvider
 
 class GeminiModelProvider(BaseAIProvider):
     def prompt_inference(self, prompt: str) -> str:

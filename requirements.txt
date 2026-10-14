@@ -1,0 +1,7 @@
+yfinance>=0.2.38
+pandas>=2.2.0
+numpy>=1.26.0
+apscheduler>=3.10.4
+lxml>=5.1.0
+html5lib>=1.1
+matplotlib>=3.8.0

@@ -6,27 +6,26 @@ import time
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# 🛠️ NATIVE PATH FIX: Tell Python to look in the current folder for signals.py
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
+# Calculate execution path bounds locally
+current_pkg_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Now these imports will work perfectly regardless of your folder depth
-from signals import MomentumSignalModule
+if current_pkg_dir not in sys.path:
+    sys.path.insert(0, current_pkg_dir)
+
+# Import directly from the immediate sibling folder directory level
 from engine import ModularPortfolioEngine
 
 
 class MasterApplicationController:
     def __init__(self):
-        # Automatically look for config.properties right next to main.py
-        self.config_path = os.path.join(current_dir, "config.properties")
+        self.config_path = os.path.join(current_pkg_dir, "config.properties")
         self.config = configparser.ConfigParser()
         self.load_settings()
 
     def load_settings(self):
         if not os.path.exists(self.config_path):
             print(f"❌ Error: Configuration file missing!")
-            print(f"Please ensure 'config.properties' is placed in: {current_dir}")
+            print(f"Please ensure 'config.properties' is placed in: {current_pkg_dir}")
             sys.exit(1)
 
         self.config.read(self.config_path)
@@ -35,9 +34,9 @@ class MasterApplicationController:
         self.budget = self.config.getfloat("MARKET_SETTINGS", "total_budget", fallback=50000.00)
 
     def launch(self):
-        print("omsivayanama om ")
+        print("omsivayanama")
         print("==================================================================")
-        print("    ✈️  MYPILOTPORTFOLIO MASTER CORE SYSTEM INITIALIZED  ✈️")
+        print("    ✈️  PORTFOLIO PILOT MASTER CORE SYSTEM INITIALIZED  ✈️")
         print("==================================================================")
         print(f"⏰ System Time : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🏳️  Market Zone : [{self.country}]")
@@ -70,7 +69,6 @@ class MasterApplicationController:
 
             print(f"📡 Background core running actively. Awaiting scheduler trigger...")
             print(f"📅 Schedule Rule: Wakes up every '{cron_w.upper()}' at {cron_h:02d}:{cron_m:02d} local time.")
-            print("👉 Leave PyCharm running. Press Stop in PyCharm to close down safely.\n")
 
             try:
                 while True:

@@ -35,7 +35,7 @@ class MasterApplicationController:
         self.budget = self.config.getfloat("MARKET_SETTINGS", "total_budget", fallback=50000.00)
 
     def launch(self):
-        print("omsivayanama")
+        print("omsivayanama om ")
         print("==================================================================")
         print("    ✈️  MYPILOTPORTFOLIO MASTER CORE SYSTEM INITIALIZED  ✈️")
         print("==================================================================")

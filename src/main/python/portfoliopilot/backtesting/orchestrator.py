@@ -1,5 +1,5 @@
 # backtesting/orchestrator.py
-import os, csv, yfinance as yf, pandas as pd
+import os, csv, datetime, yfinance as yf, pandas as pd
 from portfolio.risk import PortfolioRiskManager
 from portfolio.optimizer import PortfolioWeightAllocator
 from portfolio.rebalancing import PortfolioRebalanceController
@@ -28,16 +28,11 @@ class BacktestOrchestrator:
         self.fundamental_loader = FundamentalsDataLoader()
         self.fundamental_analyst = FundamentalAnalystAgent()
 
-        # Explicit instantiation of exact strategy modules matching your file tree definitions
         from strategies.momentum import MomentumSignalModule
         from strategies.swing import SwingTradingStrategy
-        from strategies.long_term import LongTermValueStrategy
-        from strategies.options import DerivativesOptionsStrategy
 
         self.momentum_module = MomentumSignalModule()
         self.swing_module = SwingTradingStrategy()
-        self.long_term_module = LongTermValueStrategy()
-        self.options_module = DerivativesOptionsStrategy()
         self.portfolio_optimizer = PortfolioWeightAllocator()
 
     def execute_simulation_timeline(self, raw_market_pool: list, ledger_file_path: str):
@@ -45,12 +40,17 @@ class BacktestOrchestrator:
         active_strategy_id = self.settings["active_analyst_id"]
         print(f"🎯 Activating Operational Strategy Route: [{active_strategy_id}]")
 
-        all_assets = list(set(raw_market_pool + ["^BSESN"]))
-        market_data = \
-        yf.download(all_assets, start="2023-09-01", end=self.settings["end_date"], interval="1d", progress=False)[
-            'Close']
-        fridays = market_data[market_data.index.dayofweek == 4].dropna(subset=["^BSESN"])
+        start_dt = pd.to_datetime(self.settings["start_date"])
+        download_padding_days = int(self.settings["macro_lookback"] * 31) + 60
+        calculated_start_date = (start_dt - datetime.timedelta(days=download_padding_days)).strftime('%Y-%m-%d')
 
+        all_assets = list(set(raw_market_pool + ["^BSESN"]))
+        raw_download = yf.download(all_assets, start=calculated_start_date, end=self.settings["end_date"],
+                                   interval="1d", progress=False)
+
+        market_data = raw_download['Close'] if 'Close' in raw_download else raw_download
+
+        fridays = market_data[market_data.index.dayofweek == 4].ffill()
         execution_fridays = fridays[fridays.index >= self.settings["start_date"]]
         current_cash = self.settings["initial_budget"]
         holdings_tracker = {}
@@ -59,21 +59,25 @@ class BacktestOrchestrator:
             csv.writer(file).writerow(
                 ["Cycle_Num", "Date", "Ticker", "Asset_Tier", "Quantity", "Price", "Friction_Cost", "Action"])
 
-        # RUN CHRONOLOGICAL TIMELINE LOOPS
         for i in range(len(execution_fridays) - 1):
             cycle_date = execution_fridays.index[i + 1]
+            available_tickers = [t for t in raw_market_pool if
+                                 t in fridays.columns and not pd.isna(fridays.loc[cycle_date, t])]
 
-            available_tickers = [t for t in raw_market_pool if t in fridays.columns]
+            # Rebalancing check step
+            if i % 4 == 0 and holdings_tracker:
+                for tk, data in list(holdings_tracker.items()):
+                    end_price = float(fridays.loc[cycle_date, tk])
+                    current_cash += (data["shares"] * end_price - 20.0)
+                    with open(ledger_file_path, mode='a', newline='') as file:
+                        csv.writer(file).writerow(
+                            [i + 1, cycle_date.date(), tk, "LARGE_CAP", data["shares"], end_price, 20.0, "SELL"])
+                holdings_tracker.clear()
+
             historical_slice = fridays[available_tickers][fridays.index <= cycle_date].tail(
                 self.settings["tech_lookback"])
 
-            # FIXED: Hardlocked clean object routing parameters to bypass structural lookups
-            if active_strategy_id == "FUTURE_OPTIONS":
-                strategy_picks = self.options_module.scan_derivative_hedges(historical_slice, available_tickers).head(3)
-            elif active_strategy_id == "LONG_TERM_INVESTING":
-                strategy_picks = self.long_term_module.filter_universe(
-                    fridays[available_tickers][fridays.index <= cycle_date], available_tickers).head(3)
-            elif active_strategy_id == "SWING_TRADING":
+            if active_strategy_id == "SWING_TRADING":
                 strategy_picks = self.swing_module.generate_reversion_triggers(historical_slice,
                                                                                available_tickers).head(3)
             else:
@@ -98,19 +102,18 @@ class BacktestOrchestrator:
 
             for order in calculated_orders:
                 tk, pr, sh = order['Ticker'], order['Price'], order['Shares']
-                if current_cash >= (sh * pr):
+                if current_cash >= (sh * pr) and tk not in holdings_tracker:
                     current_cash -= (sh * pr)
                     holdings_tracker[tk] = {"shares": sh}
                     with open(ledger_file_path, mode='a', newline='') as file:
                         csv.writer(file).writerow([i + 1, cycle_date.date(), tk, "LARGE_CAP", sh, pr, 20.0, "BUY"])
 
+        # Final Liquidation
         final_date = execution_fridays.index[-1]
         for tk, data in list(holdings_tracker.items()):
-            if tk in fridays.columns:
-                pr = float(fridays.loc[final_date, tk])
-                with open(ledger_file_path, mode='a', newline='') as file:
-                    csv.writer(file).writerow(
-                        [999, final_date.date(), tk, "LARGE_CAP", data["shares"], pr, 20.0, "SELL"])
+            pr = float(fridays.loc[final_date, tk])
+            with open(ledger_file_path, mode='a', newline='') as file:
+                csv.writer(file).writerow([999, final_date.date(), tk, "LARGE_CAP", data["shares"], pr, 20.0, "SELL"])
 
         print("🏁 System simulation loops completed safely.")
         analyzer = HistoricalSimulationEngine(self.settings["initial_budget"])

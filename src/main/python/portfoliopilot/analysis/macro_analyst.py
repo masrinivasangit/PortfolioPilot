@@ -4,24 +4,22 @@ import pandas as pd
 
 class MacroAnalystAgent:
     def __init__(self):
-        self.name = "Secular_Macro_Regime_Engine"
+        self.name = "Macro_Regime_Engine"
 
-    def determine_regime_safeguards(self, market_index_history: pd.DataFrame) -> dict:
-        """
-        Evaluates the broad market vector path over the configured macro lookback.
-        Returns risk constraints (BULLISH = Full Speed, BEARISH = Accumulate Liquid Cash).
-        """
-        if market_index_history.empty or len(market_index_history) < 2:
-            return {"regime": "BULLISH", "cash_buffer_modifier": 1.0}
+    def calculate_factor_multiplier(self, ticker: str, historical_data: pd.DataFrame) -> float:
+        # Reference the benchmark index to gauge systemic risk regimes
+        benchmark = "^BSESN" if "^BSESN" in historical_data.columns else historical_data.columns[0]
+        index_prices = historical_data[benchmark].dropna()
 
-        # Extract initial and final historical data points across macro lookback parameters
-        old_val = float(market_index_history.iloc[0])
-        current_val = float(market_index_history.iloc[-1])
+        if len(index_prices) < 20:
+            return 1.0
 
-        macro_return = (current_val - old_val) / old_val
+        short_ma = index_prices.rolling(window=5).mean().iloc[-1]
+        long_ma = index_prices.rolling(window=20).mean().iloc[-1]
 
-        if macro_return < -0.05:
-            # Under BEARISH regimes, system cuts spending budgets by 50% to shield active capital pools
-            return {"regime": "BEARISH", "cash_buffer_modifier": 0.50}
+        # Bullish Crossover: Market is healthy, amplify buy signal stability
+        if short_ma >= long_ma:
+            return 1.15
         else:
-            return {"regime": "BULLISH", "cash_buffer_modifier": 1.0}
+            # Bearish Market Regime: Enforce defensive capital preservation limits
+            return 0.60

@@ -1,122 +1,163 @@
 # backtesting/orchestrator.py
-import os, csv, datetime, yfinance as yf, pandas as pd
-from portfolio.risk import PortfolioRiskManager
+import os
+import csv
+import sys
+import pandas as pd
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from portfolio.optimizer import PortfolioWeightAllocator
-from portfolio.rebalancing import PortfolioRebalanceController
 from backtesting.backtest_engine import HistoricalSimulationEngine
-from backtesting.performance_plotter import PortfolioPerformancePlotter
-from data.news_data import NewsDataLoader
-from data.fundamentals import FundamentalsDataLoader
-from analysis.news_analyst import NewsAnalystAgent
-from analysis.fundamental_analyst import FundamentalAnalystAgent
 
 
 class BacktestOrchestrator:
-    def __init__(self, settings: dict, config_sections):
+    def __init__(self, settings: dict, strategy_plugin, analyst_plugins: list, friction_engine, risk_engine):
         self.settings = settings
-        self.config_sections = config_sections
-        self.risk_manager = PortfolioRiskManager(0.25)
-        self.rebalance_controller = PortfolioRebalanceController(0.05)
-        self.news_loader = NewsDataLoader()
-
-        ai_instance = None
-        if settings.get("llm_provider") == "GEMINI" and settings.get("api_key"):
-            from portfoliopilot.ai.gemini_provider import GeminiModelProvider
-            ai_instance = GeminiModelProvider(api_key=settings["api_key"])
-
-        self.news_analyst = NewsAnalystAgent(ai_provider=ai_instance)
-        self.fundamental_loader = FundamentalsDataLoader()
-        self.fundamental_analyst = FundamentalAnalystAgent()
-
-        from strategies.momentum import MomentumSignalModule
-        from strategies.swing import SwingTradingStrategy
-
-        self.momentum_module = MomentumSignalModule()
-        self.swing_module = SwingTradingStrategy()
+        self.strategy = strategy_plugin
+        self.analyst_plugins = analyst_plugins
+        self.friction_engine = friction_engine
+        self.risk_manager = risk_engine
         self.portfolio_optimizer = PortfolioWeightAllocator()
 
-    def execute_simulation_timeline(self, raw_market_pool: list, ledger_file_path: str):
-        print("📡 Downloading market data metrics for tracking timeline...")
-        active_strategy_id = self.settings["active_analyst_id"]
-        print(f"🎯 Activating Operational Strategy Route: [{active_strategy_id}]")
+    def execute_simulation_timeline(self, raw_market_pool: list, preloaded_data: pd.DataFrame,
+                                    ledger_file_path: str) -> dict:
+        if preloaded_data.empty:
+            print("   ⚠️ Preloaded data matrix is unpopulated.")
+            return {}
 
-        start_dt = pd.to_datetime(self.settings["start_date"])
-        download_padding_days = int(self.settings["macro_lookback"] * 31) + 60
-        calculated_start_date = (start_dt - datetime.timedelta(days=download_padding_days)).strftime('%Y-%m-%d')
+        valid_pool_tickers = [t for t in raw_market_pool if t in preloaded_data.columns]
+        if not valid_pool_tickers:
+            print("   ⚠️ No matching universe assets found in download blocks.")
+            return {}
 
-        all_assets = list(set(raw_market_pool + ["^BSESN"]))
-        raw_download = yf.download(all_assets, start=calculated_start_date, end=self.settings["end_date"],
-                                   interval="1d", progress=False)
+        execution_timeline = preloaded_data[preloaded_data.index >= self.settings["start_date"]]
+        if len(execution_timeline) < 2:
+            print(f"   ⚠️ Timeline contains insufficient tracking slots ({len(execution_timeline)}). Skipping.")
+            return {}
 
-        market_data = raw_download['Close'] if 'Close' in raw_download else raw_download
+        initial_budget = self.settings["initial_budget"]
+        current_cash = initial_budget
+        holdings_tracker, total_taxes = {}, 0.0
+        peak_valuation = initial_budget
 
-        fridays = market_data[market_data.index.dayofweek == 4].ffill()
-        execution_fridays = fridays[fridays.index >= self.settings["start_date"]]
-        current_cash = self.settings["initial_budget"]
-        holdings_tracker = {}
+        total_days_count = len(execution_timeline) - 1
 
-        with open(ledger_file_path, mode='w', newline='') as file:
-            csv.writer(file).writerow(
-                ["Cycle_Num", "Date", "Ticker", "Asset_Tier", "Quantity", "Price", "Friction_Cost", "Action"])
+        for i in range(total_days_count):
+            cycle_date = execution_timeline.index[i + 1]
 
-        for i in range(len(execution_fridays) - 1):
-            cycle_date = execution_fridays.index[i + 1]
-            available_tickers = [t for t in raw_market_pool if
-                                 t in fridays.columns and not pd.isna(fridays.loc[cycle_date, t])]
-
-            # Rebalancing check step
-            if i % 4 == 0 and holdings_tracker:
+            if i % int(self.settings["rebalance_days"]) == 0 and holdings_tracker:
                 for tk, data in list(holdings_tracker.items()):
-                    end_price = float(fridays.loc[cycle_date, tk])
-                    current_cash += (data["shares"] * end_price - 20.0)
-                    with open(ledger_file_path, mode='a', newline='') as file:
-                        csv.writer(file).writerow(
-                            [i + 1, cycle_date.date(), tk, "LARGE_CAP", data["shares"], end_price, 20.0, "SELL"])
+                    if tk not in preloaded_data.columns: continue
+                    pr_raw = float(preloaded_data.loc[cycle_date, tk])
+                    if pd.isna(pr_raw) or pr_raw <= 0: continue
+
+                    fx = 1.0
+                    if not tk.endswith(".NS") and "USDINR=X" in preloaded_data.columns:
+                        fx = float(preloaded_data.loc[cycle_date, "USDINR=X"])
+
+                    if pd.isna(fx) or fx <= 0: fx = 1.0
+                    pr_base = pr_raw * fx
+                    val_base = data["shares"] * pr_base
+
+                    friction = self.friction_engine.calculate_trade_leakage(tk, val_base, "SELL")
+                    tax = self.friction_engine.calculate_capital_gains_tax(data["buy_date"], cycle_date,
+                                                                           data["buy_price_base"], pr_base,
+                                                                           data["shares"])
+
+                    total_taxes += tax
+                    current_cash += (val_base - friction - tax)
+                    with open(ledger_file_path, mode='a', newline='') as f:
+                        csv.writer(f).writerow(
+                            [f"{self.settings['experiment_label']}_{i + 1}", cycle_date.date(), tk, "LARGE_CAP",
+                             data["shares"], pr_raw, friction, "SELL"])
                 holdings_tracker.clear()
 
-            historical_slice = fridays[available_tickers][fridays.index <= cycle_date].tail(
-                self.settings["tech_lookback"])
+            # FIXED: Corrected 'daily_prices' reference targets to point cleanly to 'preloaded_data'
+            current_portfolio_value = 0.0
+            for tk, data in holdings_tracker.items():
+                if tk in preloaded_data.columns:
+                    current_portfolio_value += data["shares"] * float(preloaded_data.loc[cycle_date, tk])
 
-            if active_strategy_id == "SWING_TRADING":
-                strategy_picks = self.swing_module.generate_reversion_triggers(historical_slice,
-                                                                               available_tickers).head(3)
-            else:
-                strategy_picks = self.momentum_module.pick_top_tickers(historical_slice, available_tickers, 3)
+            total_valuation = current_cash + current_portfolio_value
+            if total_valuation > peak_valuation:
+                peak_valuation = total_valuation
 
-            if strategy_picks.empty:
+            current_drawdown = (total_valuation - peak_valuation) / peak_valuation if peak_valuation > 0 else 0.0
+            risk_scaling_factor = self.risk_manager.adjust_risk_profile(current_drawdown)
+
+            if current_cash <= 100.0 or risk_scaling_factor <= 0:
                 continue
 
-            fused_rankings = []
-            for _, pick in strategy_picks.iterrows():
-                tk = pick['Ticker']
-                base_score = float(pick['Score'])
-                pr = float(pick['Price'])
+            total_allocatable = current_cash * risk_scaling_factor * 0.95
+            historical_slice = preloaded_data[valid_pool_tickers][preloaded_data.index <= cycle_date].tail(
+                self.settings["tech_lookback"])
 
-                sentiment = 1.0 + self.news_analyst.analyze_headlines(self.news_loader.fetch_ticker_news(tk))
-                health = self.fundamental_analyst.evaluate_health(self.fundamental_loader.fetch_company_metrics(tk))
-                fused_score = abs(base_score) * sentiment * health
-                fused_rankings.append({'Ticker': tk, 'Score': fused_score, 'Price': pr})
+            raw_strategy_picks = self.strategy.generate_signals(historical_slice, valid_pool_tickers,
+                                                                len(valid_pool_tickers))
+            if raw_strategy_picks.empty: continue
+
+            fused_rankings = []
+            for _, pick in raw_strategy_picks.iterrows():
+                tk = pick['Ticker']
+                base_score, pr = abs(float(pick['Score'])), float(pick['Price'])
+                if pd.isna(pr) or pr <= 0: continue
+
+                fused_multiplier = 1.0
+                for plugin in self.analyst_plugins:
+                    fused_multiplier *= plugin.calculate_factor_multiplier(tk, historical_slice)
+
+                fused_score = base_score * fused_multiplier
+                if fused_score > 0:
+                    fused_rankings.append({'Ticker': tk, 'Score': fused_score, 'Price': pr})
 
             fused_df = pd.DataFrame(fused_rankings)
-            calculated_orders = self.portfolio_optimizer.compute_share_bounds(fused_df, current_cash * 0.3)
+            if fused_df.empty: continue
+
+            fused_df = fused_df.sort_values(by="Score", ascending=False).head(int(self.settings["max_tickers"]))
+            calculated_orders = self.portfolio_optimizer.compute_share_bounds(fused_df, total_allocatable)
 
             for order in calculated_orders:
-                tk, pr, sh = order['Ticker'], order['Price'], order['Shares']
-                if current_cash >= (sh * pr) and tk not in holdings_tracker:
-                    current_cash -= (sh * pr)
-                    holdings_tracker[tk] = {"shares": sh}
-                    with open(ledger_file_path, mode='a', newline='') as file:
-                        csv.writer(file).writerow([i + 1, cycle_date.date(), tk, "LARGE_CAP", sh, pr, 20.0, "BUY"])
+                tk, pr_raw, sh = order['Ticker'], order['Price'], order['Shares']
+                fx = 1.0
+                if not tk.endswith(".NS") and "USDINR=X" in preloaded_data.columns:
+                    fx = float(preloaded_data.loc[cycle_date, "USDINR=X"])
 
-        # Final Liquidation
-        final_date = execution_fridays.index[-1]
-        for tk, data in list(holdings_tracker.items()):
-            pr = float(fridays.loc[final_date, tk])
-            with open(ledger_file_path, mode='a', newline='') as file:
-                csv.writer(file).writerow([999, final_date.date(), tk, "LARGE_CAP", data["shares"], pr, 20.0, "SELL"])
+                if pd.isna(fx) or fx <= 0: fx = 1.0
+                pr_base = pr_raw * fx
+                alloc_base = sh * pr_base
+                buy_friction = self.friction_engine.calculate_trade_leakage(tk, alloc_base, "BUY")
+                total_cost = alloc_base + buy_friction
 
-        print("🏁 System simulation loops completed safely.")
-        analyzer = HistoricalSimulationEngine(self.settings["initial_budget"])
-        analyzer.process_ledger_results(ledger_file_path=ledger_file_path)
-        plotter = PortfolioPerformancePlotter(self.settings["initial_budget"])
-        plotter.generate_equity_chart(ledger_file_path=ledger_file_path)
+                if current_cash >= total_cost and tk not in holdings_tracker:
+                    current_cash -= total_cost
+                    holdings_tracker[tk] = {"shares": sh, "buy_date": cycle_date, "buy_price_base": pr_base}
+                    with open(ledger_file_path, mode='a', newline='') as f:
+                        csv.writer(f).writerow(
+                            [f"{self.settings['experiment_label']}_{i + 1}", cycle_date.date(), tk, "LARGE_CAP", sh,
+                             pr_raw, buy_friction, "BUY"])
+
+        # FIXED: Corrected 'daily_prices' references to 'preloaded_data' in the final liquidation loop
+        if holdings_tracker:
+            final_date = execution_timeline.index[-1]
+            for tk, data in list(holdings_tracker.items()):
+                if tk in preloaded_data.columns:
+                    pr_raw = float(preloaded_data.loc[final_date, tk])
+                    if pd.isna(pr_raw) or pr_raw <= 0: continue
+                    fx = 1.0
+                    if not tk.endswith(".NS") and "USDINR=X" in preloaded_data.columns:
+                        fx = float(preloaded_data.loc[final_date, "USDINR=X"])
+                    if pd.isna(fx) or fx <= 0: fx = 1.0
+                    current_cash += (data["shares"] * (pr_raw * fx) - 20.0)
+                    with open(ledger_file_path, mode='a', newline='') as f:
+                        csv.writer(f).writerow(
+                            [999, final_date.date(), tk, "LARGE_CAP", data["shares"], pr_raw, 20.0, "SELL"])
+
+        metrics = HistoricalSimulationEngine(self.settings["initial_budget"]).process_ledger_results(
+            ledger_file_path=ledger_file_path)
+        if metrics:
+            metrics["Total Taxes Paid (INR)"] = round(total_taxes, 2)
+            return metrics
+        return {}

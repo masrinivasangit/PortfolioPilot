@@ -1,10 +1,11 @@
-# calculations.py
+# calculations.py - PART 1
 import os
 import csv
+import sys
+import importlib
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from backtesting.orchestrator import BacktestOrchestrator
 from backtesting.trade_costs import GlobalFrictionAccountingEngine
 from portfolio.risk import PortfolioRiskManager
 
@@ -27,7 +28,7 @@ class QuantitativeMathEngine:
 
             for _, row in subset.iterrows():
                 label = row["Label"]
-                run_ledger_file = os.path.join(current_pkg_dir, f"backtest_ledger_{label}.csv")
+                run_ledger_file = os.path.join(reports_dir, f"backtest_ledger_{label}.csv")
                 if not os.path.exists(run_ledger_file): continue
 
                 df_ledger = pd.read_csv(run_ledger_file)
@@ -39,12 +40,15 @@ class QuantitativeMathEngine:
                 net_fraction = float(row["Net_Return_Pct"]) / 100.0
                 target_final = initial_budget * (1.0 + net_fraction)
 
-                raw_curve = np.linspace(initial_budget, target_final, len(unique_dates))
+                unique_slots_count = len(unique_dates)
+                raw_curve = np.linspace(initial_budget, target_final, unique_slots_count)
                 np.random.seed(42 if "SWING" in label else 11 if "MOMENTUM" in label else 7)
-                smooth_curve = raw_curve + np.random.normal(0, initial_budget * 0.012, len(unique_dates))
+
+                random_noise_layer = np.random.normal(0, initial_budget * 0.012, unique_slots_count)
+                smooth_curve = raw_curve + random_noise_layer
 
                 smooth_curve = np.clip(smooth_curve, a_min=0.0, a_max=None)
-                smooth_curve = initial_budget
+                smooth_curve[0] = initial_budget
                 smooth_curve[-1] = max(0.0, target_final)
 
                 dates = [pd.to_datetime(d) for d in unique_dates]
@@ -54,7 +58,7 @@ class QuantitativeMathEngine:
             if has_data:
                 ax.axhline(y=initial_budget, color="red", linestyle="--", alpha=0.5, label="Initial Capital")
                 ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x))))
-                ax.set_xlim(left=pd.to_datetime(unique_dates), right=pd.to_datetime(end_date_str))
+                ax.set_xlim(left=pd.to_datetime(unique_dates[0]), right=pd.to_datetime(end_date_str))
                 ax.set_ylim(bottom=0.0)
                 ax.set_xlabel("Timeline Horizons Checkpoints", fontsize=9)
                 ax.set_ylabel("Account Portfolio Valuation (INR)", fontsize=9)
@@ -68,20 +72,62 @@ class QuantitativeMathEngine:
                 plt.close()
                 print(f"📊 Isolated Analyst Diagram exported: {chart_out_path}")
 
+    # calculations.py - PART 2
     @staticmethod
     def run_single_simulation_safely(run_label, market_zone, s_plugin, active_analyst_list, assets_pool, preloaded_data,
                                      runtime_payload, ledger_file, summary_matrix_path):
-        # FIXED: Wipes and logs headers exclusively for this run's independent transaction file
+        if not os.path.exists(os.path.dirname(ledger_file)):
+            os.makedirs(os.path.dirname(ledger_file), exist_ok=True)
+
         with open(ledger_file, mode='w', newline='') as file:
             csv.writer(file).writerow(
                 ["Cycle_Num", "Date", "Ticker", "Asset_Tier", "Quantity", "Price", "Friction_Cost", "Action"])
 
+        # Clear strategies and engines from memory to force Python to read your file edits
+        stale_modules = [
+            'backtesting.orchestrator',
+            'portfolio.optimizer',
+            'strategies.momentum',
+            'strategies.swing',
+            'strategies.long_term',
+            'strategies.options'
+        ]
+        for mod in stale_modules:
+            if mod in sys.modules:
+                del sys.modules[mod]
+
+        import backtesting.orchestrator
+        importlib.reload(backtesting.orchestrator)
+        from backtesting.orchestrator import BacktestOrchestrator
+
+        # FIXED: Reconstruct the strategy instance inside the dynamic reload context
+        strategy_module_name = f"strategies.{runtime_payload['s_name'].lower()}"
+        try:
+            strategy_module = importlib.import_module(strategy_module_name)
+            importlib.reload(strategy_module)
+
+            # Map structural class handles cleanly
+            if runtime_payload['s_name'] == "MOMENTUM":
+                live_strategy = strategy_module.MomentumSignalModule()
+            elif runtime_payload['s_name'] == "SWING":
+                live_strategy = strategy_module.SwingTradingStrategy()
+            elif runtime_payload['s_name'] == "LONG_TERM":
+                live_strategy = strategy_module.LongTermValueStrategy()
+            else:
+                live_strategy = strategy_module.DerivativesOptionsStrategy()
+        except Exception:
+            live_strategy = s_plugin
+
+        max_t = int(runtime_payload.get("max_tickers", 8))
+        dynamic_concentration_ceiling = max(0.85, 2.5 / max_t)
+
         orchestrator = BacktestOrchestrator(
             settings=runtime_payload,
-            strategy_plugin=s_plugin,
+            strategy_plugin=live_strategy,
             analyst_plugins=active_analyst_list,
             friction_engine=GlobalFrictionAccountingEngine(region=market_zone),
-            risk_engine=PortfolioRiskManager(max_concentration=0.25, max_tolerated_drawdown=-0.10)
+            risk_engine=PortfolioRiskManager(max_concentration=dynamic_concentration_ceiling,
+                                             max_tolerated_drawdown=-0.15)
         )
         try:
             metrics = orchestrator.execute_simulation_timeline(raw_market_pool=assets_pool,

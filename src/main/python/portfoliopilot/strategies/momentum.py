@@ -1,17 +1,43 @@
 # strategies/momentum.py
 import pandas as pd
+import numpy as np
 from backtesting.protocols import BaseInvestmentStrategy
 
+
 class MomentumSignalModule(BaseInvestmentStrategy):
+    def __init__(self):
+        self.active_multipliers = {}
+
+    def set_active_multipliers(self, multipliers: dict):
+        self.active_multipliers = multipliers
+
     def generate_signals(self, historical_data: pd.DataFrame, pool_tickers: list, max_allowed: int) -> pd.DataFrame:
         rankings = []
         for ticker in pool_tickers:
-            if ticker not in historical_data.columns: continue
-            series = historical_data[ticker].dropna()
-            if len(series) < 2: continue
-            arr = series.to_numpy()
-            p_start, p_end = float(arr[0]), float(arr[-1])
+            tk_clean = str(ticker).strip().upper()
+            if tk_clean not in historical_data.columns:
+                continue
+
+            series = historical_data[tk_clean].dropna()
+            horizon_floor = min(20, len(series))
+            if horizon_floor < 2:
+                continue
+
+            sliding_window = series.tail(horizon_floor).to_numpy().flatten()
+            p_start = float(sliding_window[0])
+            p_end = float(sliding_window[-1])
+
             if p_start > 0:
-                rankings.append({'Ticker': ticker, 'Score': (p_end - p_start) / p_start, 'Price': p_end})
-        if not rankings: return pd.DataFrame()
+                base_momentum = (p_end - p_start) / p_start
+
+                # FIX: Dynamically apply the analyst framework multiplier directly to the core signal
+                fused_mult = self.active_multipliers.get(tk_clean, 1.0)
+                adjusted_score = base_momentum * float(fused_mult)
+
+                rankings.append({'Ticker': tk_clean, 'Score': adjusted_score, 'Price': p_end})
+
+        if not rankings:
+            return pd.DataFrame()
+
+        # FIX: Enforce truncation to max_allowed so the scoring differences alter the final portfolio
         return pd.DataFrame(rankings).sort_values(by='Score', ascending=False).head(max_allowed)

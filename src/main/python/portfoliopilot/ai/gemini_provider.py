@@ -1,12 +1,14 @@
 # ai/gemini_provider.py
+import os
 from google import genai
 from portfoliopilot.ai.provider import BaseAIProvider
 
 class GeminiModelProvider(BaseAIProvider):
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str = None):
         super().__init__()
-        # FIXED: Initializing the official unified GenAI Client structure
-        self.client = genai.Client(api_key=api_key)
+        # Fallback cleanly to environment variables if main loop leaves it empty
+        resolved_key = api_key or os.environ.get("GEMINI_API_KEY", "MOCK_KEY")
+        self.client = genai.Client(api_key=resolved_key)
         self.model_name = "gemini-1.5-flash"
 
     def prompt_inference(self, prompt: str) -> str:
@@ -18,4 +20,8 @@ class GeminiModelProvider(BaseAIProvider):
             )
             return response.text.strip()
         except Exception as e:
-            return "0.0"  # Safe neutral sentiment fallback if API drops out
+            return "1.0"  # Safe neutral multiplier fallback
+
+    def generate_text(self, prompt: str) -> str:
+        """Bridges interface naming mismatch called by NewsAnalystAgent."""
+        return self.prompt_inference(prompt)

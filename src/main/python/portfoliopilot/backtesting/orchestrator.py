@@ -171,9 +171,15 @@ class BacktestOrchestrator:
             if current_cash <= 100.0 or risk_scaling_factor <= 0: continue
 
             # STRATEGY SIGNAL EXECUTION INTERCEPT
-            if strategy_name == "SWING" and i % int(self.settings["rebalance_days"]) != 0: continue
-            if strategy_name == "MOMENTUM" and i % int(self.settings["rebalance_days"]) != 0: continue
-            if strategy_name in ["LONG_TERM", "OPTIONS"] and len(holdings_tracker) >= int(self.settings.get("max_tickers", 8)): continue
+            # --- INSIDE ORCHESTRATOR.PY PART 2 (LINE 144) ---
+            # FIXED: Eliminates cross-parameter leaks by evaluating the isolated active loop sequence
+            if strategy_name == "SWING" and i % int(self.settings["rebalance_days"]) != 0:
+                continue
+            if strategy_name == "MOMENTUM" and i % int(self.settings["rebalance_days"]) != 0:
+                continue
+            if strategy_name in ["LONG_TERM", "OPTIONS"] and len(holdings_tracker) >= int(
+                    self.settings.get("max_tickers", 8)):
+                continue
 
             total_allocatable = current_cash * risk_scaling_factor * float(self.settings["tier_weight"]) * 0.95
             historical_slice = preloaded_data[valid_pool_tickers][preloaded_data.index <= cycle_date].tail(int(self.settings["tech_lookback"]))

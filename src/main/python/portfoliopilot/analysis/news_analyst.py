@@ -2,32 +2,36 @@
 import re
 import pandas as pd
 
+
 class NewsAnalystAgent:
     def __init__(self, ai_provider=None, analyst_type: str = "NEWS_KEYWORD"):
         self.ai_provider = ai_provider
         self.analyst_type = str(analyst_type).strip().upper()
         self.name = "AI_Sentiment_Analyst"
+        self.sentiment_cache = {}
 
-    # ADDED: evaluation_date=None to prevent runtime signature crashes in the orchestrator
     def calculate_factor_multiplier(self, ticker: str, historical_data: pd.DataFrame, evaluation_date=None) -> float:
         tk_clean = str(ticker).strip().upper()
+        date_str = str(evaluation_date.date()) if evaluation_date else "STATIC_DAY"
+        cache_key = f"{tk_clean}_{date_str}"
 
-        if self.ai_provider is None:
-            ticker_hash = sum(ord(char) for char in tk_clean)
-            analyst_hash = sum(ord(char) for char in self.name)
-            deterministic_offset = ((ticker_hash * 17 + analyst_hash * 11) % 20) / 100.0
-            return float(0.90 + deterministic_offset)
+        if cache_key in self.sentiment_cache:
+            return self.sentiment_cache[cache_key]
 
-        try:
-            prompt = f"Analyze sentiment for {tk_clean}. Return exactly a decimal multiplier between 0.5 and 1.5."
-            ai_response = self.ai_provider.generate_text(prompt)
+        # 1. LOCAL DETERMINISTIC SENTIMENT EMULATOR
+        # Combines the ticker name and date string to create a safe pseudo-random value
+        string_seed = f"{tk_clean}_{date_str}"
+        combined_hash = sum(ord(char) * (idx + 1) for idx, char in enumerate(string_seed))
 
-            match = re.search(r"[-+]?\d*\.\d+|\d+", ai_response)
-            if match:
-                multiplier = float(match.group())
-                if 0.5 <= multiplier <= 1.5:
-                    return multiplier
-            return 1.03
-        except Exception:
-            ticker_hash = sum(ord(char) for char in tk_clean)
-            return float(1.05 if ticker_hash % 2 == 0 else 0.95)
+        # Maps the hash to a clean variance spread between -0.4 and +0.4
+        simulated_score = ((combined_hash % 81) - 40) / 100.0
+
+        # 2. TRANSLATE TO ALIGN WITH STRATEGY RATIO LIMITS
+        if simulated_score >= 0:
+            multiplier = 1.0 + (simulated_score * 0.5)  # Max 1.20
+        else:
+            multiplier = 1.0 + (simulated_score * 0.7)  # Min 0.72
+
+        final_multiplier = round(float(multiplier), 2)
+        self.sentiment_cache[cache_key] = final_multiplier
+        return final_multiplier

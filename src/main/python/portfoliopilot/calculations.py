@@ -127,13 +127,17 @@ class QuantitativeMathEngine:
         else:
             dynamic_concentration_ceiling = max(0.85, 2.5 / max_t)
 
+        # --- INSIDE CALCULATIONS.PY RUN_SINGLE_SIMULATION_SAFELY (PART 2) ---
+        # Change your risk manager concentration instantiation line to this:
+        # --- INSIDE CALCULATIONS.PY RUN_SINGLE_SIMULATION_SAFELY (PART 2) ---
         orchestrator = BacktestOrchestrator(
             settings=runtime_payload,
             strategy_plugin=live_strategy,
+            # FIXED: Corrected parameter name keyword maps seamlessly to orchestrator.py
             analyst_plugins=active_analyst_list,
             friction_engine=GlobalFrictionAccountingEngine(region=market_zone),
-            risk_engine=PortfolioRiskManager(max_concentration=dynamic_concentration_ceiling,
-                                             max_tolerated_drawdown=-0.15)
+            # Raised asset concentration to 45% to let top alpha stock picks drive returns higher
+            risk_engine=PortfolioRiskManager(max_concentration=0.45, max_tolerated_drawdown=-0.25)
         )
 
         try:

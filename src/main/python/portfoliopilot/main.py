@@ -186,7 +186,7 @@ class QuantitativeDiscoveryEngine:
 
         master_historical_prices.columns = [str(col).strip().upper() for col in master_historical_prices.columns]
 # main.py - PART 2 (Continuation of execute_grid_search method)
-        gemini_active = api_token.startswith("AIza") and "YourActual" not in api_token
+        gemini_active = len(api_token) > 10 and "YourActual" not in api_token
         openai_active = openai_token.startswith("sk-") and "YourActual" not in openai_token
 
         if gemini_active and "GEMINI_AI_TREND" in configured_analysts:
@@ -220,15 +220,29 @@ class QuantitativeDiscoveryEngine:
 
                     print(f"⚡ Simulating Tracking Thread #{experiment_count}: [Strategy: {s_name} | Universe: {u_name} | Analyst: {a_name}]")
 
+                    # --- INSIDE MAIN.PY EXECUTING COMBINATION LOOP (PART 2) ---
                     fresh_strategy_instance = s_class()
-                    isolated_analyst_list = copy.deepcopy(base_analyst_list)
 
+                    # FIXED: Removed internal import to resolve UnboundLocalError namespace collision
+                    isolated_analyst_list = []
+                    for analyst_agent in base_analyst_list:
+                        if hasattr(analyst_agent, 'ai_provider') and analyst_agent.ai_provider is not None:
+                            # Safely shallow-copy the AI analyst to preserve global network sockets
+                            new_ai_agent = copy.copy(analyst_agent)
+                            # Flush memory limits per tracking path cycle thread
+                            new_ai_agent.sentiment_cache = {}
+                            isolated_analyst_list.append(new_ai_agent)
+                        else:
+                            # Mathematical indicators are safe to deepcopy natively
+                            isolated_analyst_list.append(copy.deepcopy(analyst_agent))
+
+                    # FIXED UNIQUE ID ASSIGNMENT AND LAYER WRAPPER
                     for idx_plug, analyst_agent in enumerate(isolated_analyst_list):
                         unique_id_scalar = 0.05 * (idx_plug + 1) + (experiment_count * 0.01)
                         if hasattr(analyst_agent, 'set_tier_weight'):
                             analyst_agent.set_tier_weight(unique_id_scalar)
                         if hasattr(analyst_agent, 'name'):
-                            analyst_agent.name = f"{analyst_agent.name}_{experiment_count}_{idx_plug}"
+                            analyst_agent.name = f"{str(analyst_agent.__class__.__name__)}_{experiment_count}_{idx_plug}"
 
                     # DYNAMIC STRATEGY TIMEFRAME ROUTER: Loaded dynamically from config fields
                     # Pull overrides directly from [STRATEGY_TIMEFRAME_OVERRIDES] section

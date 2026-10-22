@@ -25,6 +25,9 @@ class HistoricalSimulationEngine:
         equity_curve = []
         dates = []
 
+        # Track absolute execution frequency to defend against low-sample bias
+        total_executed_trades = len(df)
+
         for date in unique_dates:
             day_actions = df[df['Date'] == date]
 
@@ -77,13 +80,23 @@ class HistoricalSimulationEngine:
         std_dev = returns_series.std()
         mean_return = returns_series.mean()
 
-        # FIXED INSTITUTIONAL SAFETY WRAPPER: Handles zero-volatility risk-free interest buffers safely
+        # INSTITUTIONAL SAFETY WRAPPER: Volatility checks
         if std_dev == 0 or pd.isna(std_dev) or len(returns_series) < 2:
             annualized_volatility = 0.0
-            sharpe_ratio = 5.0 if total_return > 0 else 0.0
+            raw_sharpe_ratio = 5.0 if total_return > 0 else 0.0
         else:
             annualized_volatility = float(std_dev * np.sqrt(ann_factor))
-            sharpe_ratio = float((mean_return / (std_dev + 1e-9)) * np.sqrt(ann_factor))
+            raw_sharpe_ratio = float((mean_return / (std_dev + 1e-9)) * np.sqrt(ann_factor))
+
+        # FIXED ANTI-STALLING GUARDRAIL: Apply strict volume penalty adjustments
+        # Defends dashboard logic against single-trade anomalies providing zero-volatility returns
+        MIN_TRADES_THRESHOLD = 5
+        if total_executed_trades < MIN_TRADES_THRESHOLD:
+            # Linearly scale down the Sharpe ratio based on trade execution deficit
+            volume_multiplier = float(total_executed_trades / MIN_TRADES_THRESHOLD)
+            sharpe_ratio = round(raw_sharpe_ratio * volume_multiplier, 2)
+        else:
+            sharpe_ratio = round(raw_sharpe_ratio, 2)
 
         rolling_max = equity_series.cummax()
         drawdowns = (equity_series - rolling_max) / (rolling_max + 1e-9)
@@ -95,7 +108,7 @@ class HistoricalSimulationEngine:
             "Net Return (%)": round(total_return * 100, 2),
             "Total Friction Fees Paid": round(total_frictions_paid, 2),
             "Annualized Volatility (%)": round(annualized_volatility * 100, 2),
-            "Sharpe Ratio": round(sharpe_ratio, 2),
+            "Sharpe Ratio": sharpe_ratio,
             "Max Drawdown (%)": round(max_drawdown * 100, 2)
         }
 

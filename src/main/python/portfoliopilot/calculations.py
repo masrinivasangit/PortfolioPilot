@@ -118,8 +118,14 @@ class QuantitativeMathEngine:
         except Exception:
             live_strategy = s_plugin
 
+        # calculations.py - PART 2 (Fixing ZeroDivisionError)
         max_t = int(runtime_payload.get("max_tickers", 8))
-        dynamic_concentration_ceiling = max(0.85, 2.5 / max_t)
+
+        # FIXED: Core institutional guardrail preventing mathematical division crashes when max_tickers is set to 0
+        if max_t <= 0:
+            dynamic_concentration_ceiling = 0.0
+        else:
+            dynamic_concentration_ceiling = max(0.85, 2.5 / max_t)
 
         orchestrator = BacktestOrchestrator(
             settings=runtime_payload,
@@ -129,6 +135,7 @@ class QuantitativeMathEngine:
             risk_engine=PortfolioRiskManager(max_concentration=dynamic_concentration_ceiling,
                                              max_tolerated_drawdown=-0.15)
         )
+
         try:
             metrics = orchestrator.execute_simulation_timeline(raw_market_pool=assets_pool,
                                                                preloaded_data=preloaded_data,

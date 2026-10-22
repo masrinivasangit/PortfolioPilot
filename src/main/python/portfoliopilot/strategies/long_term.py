@@ -25,7 +25,7 @@ class LongTermValueStrategy(BaseInvestmentStrategy):
             if len(prices) < 15:
                 continue
 
-            sliding_horizon = prices.tail(15).to_numpy().flatten()
+            sliding_horizon = prices.tail(60).to_numpy().flatten()
             p_old = float(sliding_horizon[0])
             p_current = float(sliding_horizon[-1])
 

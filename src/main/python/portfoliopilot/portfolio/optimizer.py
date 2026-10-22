@@ -1,28 +1,33 @@
 # portfolio/optimizer.py
 import pandas as pd
 import numpy as np
+from backtesting.trade_costs import GlobalFrictionAccountingEngine
+
 
 class PortfolioWeightAllocator:
-    def __init__(self):
-        self.name = "Resilient_Conviction_Weight_Allocator"
+    def __init__(self, region: str = "IN"):
+        self.friction_calculator = GlobalFrictionAccountingEngine(region=region)
 
-    def compute_share_bounds(self, rankings_df: pd.DataFrame, available_budget: float) -> list:
-        if rankings_df.empty or available_budget <= 100.0:
+    def generate_optimal_allocations(self, sorted_picks: pd.DataFrame, available_budget: float,
+                                     max_allowed: int) -> list:
+        """Maintains signature parity for secondary execution engines."""
+        return self.compute_share_bounds(sorted_picks, available_budget)
+
+    def compute_share_bounds(self, sorted_picks: pd.DataFrame, available_budget: float, *args, **kwargs) -> list:
+        """
+        FIXED ORCHESTRATOR PATHWAY: This is the active method executing inside orchestrator.py.
+        Processes proportional cash allocations, applies fractional force-buys, and
+        guards capital from leakages via the 0.25% Dynamic Friction Buffer Filter.
+        """
+        if sorted_picks.empty:
             return []
 
-        min_score = rankings_df["Score"].min()
-        if min_score <= 0:
-            rankings_df = rankings_df.copy()
-            rankings_df["Score"] = rankings_df["Score"] - min_score + 0.01
-
-        total_score_sum = rankings_df["Score"].sum()
+        orders = []
+        total_score_sum = sorted_picks['Score'].sum()
         if total_score_sum <= 0:
             return []
 
-        sorted_picks = rankings_df.sort_values(by="Score", ascending=False)
-        orders = []
-
-        # PASS 1: Calculate raw baseline proportional allocations
+        # Iterate through strategy targets to determine execution share limits
         for _, row in sorted_picks.iterrows():
             tk = row['Ticker']
             raw_pr = row['Price']
@@ -35,23 +40,33 @@ class PortfolioWeightAllocator:
             allocated_cash = available_budget * score_fraction
             shares_to_buy = int(allocated_cash // pr)
 
+            # Proportional Force-Buy Trigger for concentrated alpha stability
+            if shares_to_buy == 0 and available_budget >= pr:
+                shares_to_buy = 1
+
             if shares_to_buy > 0:
-                cost = shares_to_buy * pr
-                if available_budget >= cost:
-                    orders.append({'Ticker': tk, 'Price': pr, 'Shares': shares_to_buy, 'Score': row['Score']})
-                    available_budget -= cost
+                position_value = shares_to_buy * pr
 
-        # PASS 2: Balanced Score-Weighted Cash Sweep Pass
-        # Distributes residual budget sequentially across available assets based on rank priority
-        if orders and available_budget > 100.0:
-            orders.sort(key=lambda x: x['Score'], reverse=True)
+                # DYNAMIC FRICTION BUFFER FILTER: Predict trade leakage cost prior to execution
+                estimated_friction = self.friction_calculator.calculate_trade_leakage(
+                    ticker=tk,
+                    trade_value=position_value,
+                    action="BUY"
+                )
 
-            for order in orders:
-                pr = order['Price']
-                if available_budget >= pr:
-                    order['Shares'] += 1
-                    available_budget -= pr
-                if available_budget < 100.0:
-                    break
+                # Institutional Gate: If transaction costs consume > 0.25% of the position value, skip it!
+                friction_ratio = estimated_friction / position_value
+                if friction_ratio > 0.0025:
+                    continue  # Drops high-churn, inefficient trades immediately
 
-        return [{'Ticker': o['Ticker'], 'Price': o['Price'], 'Shares': o['Shares']} for o in orders if o['Shares'] > 0]
+                if available_budget >= (position_value + estimated_friction):
+                    # Aligned perfectly to unpack directly into: tk, pr_raw, sh = order['Ticker'], order['Price'], order['Shares']
+                    orders.append({
+                        'Ticker': tk,
+                        'Price': pr,
+                        'Shares': shares_to_buy,
+                        'Friction_Cost': estimated_friction
+                    })
+                    available_budget -= (position_value + estimated_friction)
+
+        return orders

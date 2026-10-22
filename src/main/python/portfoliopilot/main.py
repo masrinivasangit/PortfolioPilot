@@ -5,6 +5,7 @@ import csv
 import sys
 import datetime
 import copy
+import shutil
 import yfinance as yf
 import pandas as pd
 
@@ -31,15 +32,30 @@ from analysis.compounder_analyst import LongTermCompounderAnalyst
 class QuantitativeDiscoveryEngine:
     def __init__(self):
         self.config_path = os.path.join(current_pkg_dir, "config.properties")
-        self.summary_matrix_path = os.path.join(current_pkg_dir, "optimal_strategy_matrix.csv")
         self.reports_dir = os.path.join(current_pkg_dir, "reports")
+        self.summary_matrix_path = os.path.join(self.reports_dir, "optimal_strategy_matrix.csv")
         self.config = configparser.ConfigParser(inline_comment_prefixes=('#', ';'))
 
     def execute_grid_search(self):
         print("omsivayanama")
         print("==================================================================")
-        print(" ✈️  LAUNCHING CONFIG-DRIVEN PORTFOLIO PILOT MATRIX ENGINE      ✈️ ")
+        print(" ✈️  LAUNCHING SANITIZED PORTFOLIO PILOT MATRIX ENGINE          ✈️ ")
         print("==================================================================")
+
+        # Sanitization Pass: Clear reports folder out safely to avoid caching overlaps
+        if os.path.exists(self.reports_dir):
+            print("🧹 Sanitization Pass: Clearing out existing records from reports directory...")
+            for asset_item in os.listdir(self.reports_dir):
+                item_path = os.path.join(self.reports_dir, asset_item)
+                try:
+                    if os.path.isfile(item_path) or os.path.islink(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not clear path element {item_path}: {e}")
+        else:
+            os.makedirs(self.reports_dir, exist_ok=True)
 
         if not os.path.exists(self.config_path):
             print(f"❌ Critical Error: Configuration file not found at {self.config_path}")
@@ -71,7 +87,6 @@ class QuantitativeDiscoveryEngine:
         risky_pool_size = self.config.getint("RISKY_TIER", "pool_size", fallback=50)
         risky_max = self.config.getint("RISKY_TIER", "max_tickers", fallback=2)
 
-        # MASTER REPOSITORIES
         strategies_blueprints_master = {
             "MOMENTUM": MomentumSignalModule,
             "SWING": SwingTradingStrategy,
@@ -82,13 +97,11 @@ class QuantitativeDiscoveryEngine:
         analysts_base_pool_master = {
             "QUANT_CORE_TREND": [TechnicalAnalystAgent(), MacroAnalystAgent()],
             "VALUATION_ALPHA": [FundamentalAnalystAgent(), MacroAnalystAgent()],
-            "SENTIMENT_ROTATION": [NewsAnalystAgent(ai_provider=None, analyst_type="NEWS_KEYWORD"),
-                                   TechnicalAnalystAgent()],
+            "SENTIMENT_ROTATION": [NewsAnalystAgent(ai_provider=None, analyst_type="NEWS_KEYWORD"), TechnicalAnalystAgent()],
             "LTCG_COMPOUNDER": [LongTermCompounderAnalyst(), FundamentalAnalystAgent()],
             "HYBRID_INTELLIGENCE": [VelocityBreakoutAnalyst(), MacroAnalystAgent(), FundamentalAnalystAgent()]
         }
 
-        # DYNAMIC PROPERTY EXTRACTION
         raw_strategies = self.config.get("MARKET_SETTINGS", "active_strategies", fallback="LONG_TERM, MOMENTUM")
         raw_analysts = self.config.get("MARKET_SETTINGS", "active_analysts", fallback="LTCG_COMPOUNDER, QUANT_CORE_TREND")
 
@@ -99,15 +112,11 @@ class QuantitativeDiscoveryEngine:
         for s_key in configured_strategies:
             if s_key in strategies_blueprints_master:
                 strategies_blueprints[s_key] = strategies_blueprints_master[s_key]
-            else:
-                print(f"⚠️ Warning: Configured strategy '{s_key}' not found in master blueprints mapping.")
 
         analysts_base_pool = {}
         for a_key in configured_analysts:
             if a_key in analysts_base_pool_master:
                 analysts_base_pool[a_key] = analysts_base_pool_master[a_key]
-            else:
-                print(f"⚠️ Warning: Configured analyst framework '{a_key}' not found in master pool mappings.")
 
         if not strategies_blueprints:
             strategies_blueprints = {"LONG_TERM": LongTermValueStrategy}
@@ -175,11 +184,8 @@ class QuantitativeDiscoveryEngine:
         if master_historical_prices.index.tz is not None:
             master_historical_prices.index = master_historical_prices.index.tz_localize(None)
 
-        master_historical_prices = master_historical_prices.ffill().bfill()
         master_historical_prices.columns = [str(col).strip().upper() for col in master_historical_prices.columns]
-
-        print(f"✅ Data Acquisition Complete! Loaded Pricing Shape: {master_historical_prices.shape}")
-# main.py - PART 2
+# main.py - PART 2 (Continuation of execute_grid_search method)
         gemini_active = api_token.startswith("AIza") and "YourActual" not in api_token
         openai_active = openai_token.startswith("sk-") and "YourActual" not in openai_token
 
@@ -199,9 +205,6 @@ class QuantitativeDiscoveryEngine:
             ]
             print("🧠 Multi-Agent Configuration Router: [CHATGPT_AI Stack Activated]")
 
-        os.makedirs(self.reports_dir, exist_ok=True)
-
-        # Write clean table metrics header (overwrites old file traces completely)
         with open(self.summary_matrix_path, mode='w', newline='') as file:
             csv.writer(file).writerow(
                 ["Label", "Zone", "Strategy", "Universe", "Analyst_Layer", "Net_Return_Pct", "Sharpe_Ratio",
@@ -227,13 +230,37 @@ class QuantitativeDiscoveryEngine:
                         if hasattr(analyst_agent, 'name'):
                             analyst_agent.name = f"{analyst_agent.name}_{experiment_count}_{idx_plug}"
 
+                    # DYNAMIC STRATEGY TIMEFRAME ROUTER: Loaded dynamically from config fields
+                    # Pull overrides directly from [STRATEGY_TIMEFRAME_OVERRIDES] section
+                    s_lower = s_name.lower()
+
+                    # FIXED: Direct parameter mapping extraction bypasses fallback constraints
+                    try:
+                        tech_lookback_run = self.config.getint(
+                            "STRATEGY_TIMEFRAME_OVERRIDES",
+                            f"{s_lower}_lookback_days",
+                            fallback=tech_lookback_days
+                        )
+                        rebalance_run = self.config.getint(
+                            "STRATEGY_TIMEFRAME_OVERRIDES",
+                            f"{s_lower}_rebalance_days",
+                            fallback=rebalance_interval_days
+                        )
+                    except Exception:
+                        if s_name == "SWING":
+                            tech_lookback_run, rebalance_run = 15, 4
+                        elif s_name == "MOMENTUM":
+                            tech_lookback_run, rebalance_run = 20, 25
+                        else:
+                            tech_lookback_run, rebalance_run = 60, 20
+
                     runtime_payload = {
                         "start_date": start_date,
                         "end_date": end_date,
                         "initial_budget": initial_budget,
-                        "tech_lookback": tech_lookback_days,
+                        "tech_lookback": int(tech_lookback_run),
                         "macro_lookback": macro_lookback,
-                        "rebalance_days": rebalance_interval_days,
+                        "rebalance_days": int(rebalance_run),
                         "max_tickers": u_settings["max_tickers"],
                         "tier_weight": u_settings["weight"],
                         "experiment_label": run_label,
@@ -255,8 +282,7 @@ class QuantitativeDiscoveryEngine:
                         summary_matrix_path=self.summary_matrix_path
                     )
 
-        # CRITICAL PROTECTION CHECK: Deduplicate matrix fields natively before chart generations
-        print("\n🧹 Executing structural matrix database deduplication pass...")
+        print("\n📝 Executing structural matrix database deduplication pass...")
         if os.path.exists(self.summary_matrix_path):
             df_cleanup = pd.read_csv(self.summary_matrix_path)
             if not df_cleanup.empty:

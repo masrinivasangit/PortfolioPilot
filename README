@@ -1,0 +1,136 @@
+# PortfolioPilot
+
+**An intelligent, Python-based portfolio analysis and investment decision-support platform.**
+
+PortfolioPilot is a personal technology project exploring how software engineering, financial analysis and AI-assisted decision-making can come together to support portfolio management.
+
+The goal is to build a modular platform that analyses investment opportunities, evaluates portfolio risk, identifies market signals and supports structured investment decisions.
+
+The project is being developed incrementally, with an emphasis on modular architecture, extensibility, testability and responsible use of AI.
+
+## Project Vision
+
+PortfolioPilot aims to bring multiple investment-analysis capabilities together into a unified platform.
+
+The long-term vision includes:
+
+- **Market Analysis:** Analyse market data and identify relevant market trends.
+- **Fundamental Analysis:** Evaluate companies using financial and business indicators.
+- **Technical Analysis:** Identify price trends, momentum and technical signals.
+- **Macroeconomic Analysis:** Consider broader economic indicators and market conditions.
+- **Risk Management:** Evaluate portfolio exposure, concentration and potential downside.
+- **Portfolio Allocation:** Explore portfolio construction and asset-allocation strategies.
+- **AI-Assisted Insights:** Use AI to interpret analytical results and support investment research.
+- **Backtesting:** Evaluate investment strategies against historical market data.
+
+These capabilities represent the intended development direction; implementation will evolve as the project progresses.
+
+## Architectural Direction
+
+The project is being designed around modular components with clearly separated responsibilities.
+
+The intended high-level workflow is:
+
+```text
+Market Data
+    |
+    v
+Analysis Modules
+    |
+    +-- Fundamental Analysis
+    +-- Technical Analysis
+    +-- Macroeconomic Analysis
+    +-- News Analysis
+    |
+    v
+Risk Management
+    |
+    v
+Decision Engine
+    |
+    v
+Portfolio Optimisation
+    |
+    v
+Investment Insights
+```
+
+The objective is to keep individual analytical components independent so they can be developed, tested and enhanced without tightly coupling the entire application.
+
+## Current Project Structure
+
+```text
+PortfolioPilot/
+│
+├── src/
+│   └── main/
+│       └── python/
+│           └── portfoliopilot/
+│               ├── config.properties
+│               ├── main.py
+│               ├── engine.py
+│               └── signals.py
+│
+└── README.md
+```
+
+The structure will evolve as additional modules and capabilities are introduced.
+
+## Technology Stack
+
+| Area | Technology |
+|---|---|
+| Programming Language | Python |
+| Development Environment | PyCharm |
+| Version Control | Git / GitHub |
+| Configuration | Properties-based configuration |
+
+Additional technologies for market data, analytics, AI integration, persistence and visualisation will be evaluated as the project develops.
+
+## Development Approach
+
+PortfolioPilot is being developed incrementally, following a modular and extensible design approach.
+
+Key engineering priorities include:
+
+- Separation of concerns and modular design
+- Reusable analytical components
+- Configurable application behaviour
+- Testable business and analytical logic
+- Extensible integration with external data sources
+- Clear separation between analysis, risk evaluation and investment decisions
+
+## Roadmap
+
+Planned development areas:
+
+- [ ] Establish the core application and decision engine
+- [ ] Develop market-data integration
+- [ ] Expand fundamental and technical analysis
+- [ ] Introduce portfolio risk evaluation
+- [ ] Develop portfolio allocation and optimisation
+- [ ] Add historical backtesting capabilities
+- [ ] Explore AI-powered investment research and insights
+- [ ] Introduce persistent portfolio data management
+- [ ] Develop a user-friendly dashboard
+- [ ] Add automated testing and deployment workflows
+
+## Responsible Use
+
+PortfolioPilot is an experimental investment research and decision-support project.
+
+It is not a registered investment adviser, does not guarantee investment returns and is not intended to execute real-money trades without appropriate safeguards and explicit authorisation.
+
+All analytical outputs should be independently evaluated before making investment decisions.
+
+## Project Status
+
+**Early-stage development — actively evolving.**
+
+The repository currently contains the initial application foundation. Further functionality and architectural components will be introduced progressively.
+
+## Author
+
+Developed as an independent project to explore Python-based financial software, modular system design, investment analytics and AI-assisted application development.
+
+[GitHub Repository](https://github.com/masrinivasangit/PortfolioPilot)
